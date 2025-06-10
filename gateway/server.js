@@ -2,116 +2,36 @@
 const express = require('express');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const cors = require('cors');
-const http = require('http');
 require('dotenv').config();
 
 const app = express();
 const PORT = process.env.GATEWAY_PORT || 3000;
 
+// Service URLs
 const AUTH_SERVICE = process.env.AUTH_SERVICE_URL || 'http://localhost:3001';
 const EHR_SERVICE = process.env.EHR_SERVICE_URL || 'http://localhost:3002';
 const AI_SERVICE = process.env.AI_SERVICE_URL || 'http://localhost:3003';
 
-console.log('🔧 Service Configuration:');
-console.log('AUTH_SERVICE:', AUTH_SERVICE);
-console.log('EHR_SERVICE:', EHR_SERVICE);
-console.log('AI_SERVICE:', AI_SERVICE);
-
-// Health check function
-const checkServiceHealth = (serviceUrl, serviceName) => {
-  return new Promise((resolve) => {
-    const url = new URL(serviceUrl);
-    const options = {
-      hostname: url.hostname,
-      port: url.port,
-      path: '/health',
-      method: 'GET',
-      timeout: 3000
-    };
-
-    const fallbackOptions = { ...options, path: '/' };
-
-    const req = http.request(options, (res) => {
-      resolve({ service: serviceName, status: 'UP', statusCode: res.statusCode, url: serviceUrl });
-    });
-
-    req.on('error', () => {
-      const fallbackReq = http.request(fallbackOptions, (res) => {
-        resolve({
-          service: serviceName,
-          status: 'UP',
-          statusCode: res.statusCode,
-          url: serviceUrl,
-          note: 'No /health endpoint, but service responding'
-        });
-      });
-
-      fallbackReq.on('error', (err) => {
-        resolve({
-          service: serviceName,
-          status: 'DOWN',
-          error: err.message,
-          url: serviceUrl
-        });
-      });
-
-      fallbackReq.on('timeout', () => {
-        fallbackReq.destroy();
-        resolve({ service: serviceName, status: 'TIMEOUT', url: serviceUrl });
-      });
-
-      fallbackReq.setTimeout(3000);
-      fallbackReq.end();
-    });
-
-    req.on('timeout', () => {
-      req.destroy();
-      resolve({ service: serviceName, status: 'TIMEOUT', url: serviceUrl });
-    });
-
-    req.setTimeout(3000);
-    req.end();
-  });
-};
-
-const checkAllServices = async () => {
-  console.log('🔍 Checking service health...');
-  const services = [
-    { url: AUTH_SERVICE, name: 'AUTH' },
-    { url: EHR_SERVICE, name: 'EHR' },
-    { url: AI_SERVICE, name: 'AI' }
-  ];
-  const results = await Promise.all(services.map(service => checkServiceHealth(service.url, service.name)));
-
-  console.log('📊 Service Health Status:');
-  results.forEach(result => {
-    const status = result.status === 'UP' ? '✅' : '❌';
-    console.log(`${status} ${result.service}: ${result.status} (${result.url})`);
-    if (result.error) console.log(`   Error: ${result.error}`);
-    if (result.note) console.log(`   Note: ${result.note}`);
-  });
-
-  return results;
-};
-
-// ✅ CORS config
+// CORS Configuration - Apply before all other middleware
 const corsOptions = {
-  origin: (origin, callback) => {
-    // Allow requests with no origin (like mobile apps, curl, postman)
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    // Allow same-origin and known dev origins
+    
     const allowedOrigins = [
       'http://localhost:3000',
       'http://localhost:5173',
-      'http://localhost:4173',
-      'http://127.0.0.1:3000',
+      'http://localhost:5174', // Additional Vite dev server port
       'http://127.0.0.1:5173',
-      'https://quickehr-gateway.onrender.com'
+      'http://127.0.0.1:3000',
+      'https://your-frontend-domain.com'
     ];
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
+    
+    if (allowedOrigins.indexOf(origin) !== -1) {
+      callback(null, true);
     } else {
-      return callback(new Error('Not allowed by CORS'));
+      console.warn(`CORS blocked origin: ${origin}`);
+      callback(null, true); // Allow for development - change to false in production
     }
   },
   credentials: true,
@@ -121,25 +41,30 @@ const corsOptions = {
     'X-Requested-With',
     'Content-Type',
     'Accept',
-    'Authorization'
-  ]
+    'Authorization',
+    'Cache-Control',
+    'X-Forwarded-For'
+  ],
+  exposedHeaders: ['Authorization'],
+  optionsSuccessStatus: 200, // For legacy browser support
+  preflightContinue: false
 };
 
-
+// Apply CORS globally
 app.use(cors(corsOptions));
+
+// Handle preflight requests explicitly
 app.options('*', cors(corsOptions));
 
-app.use(express.json());
-
+// Logging middleware
 app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.path}`);
-  console.log('Headers:', JSON.stringify(req.headers, null, 2));
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.path} - Origin: ${req.headers.origin || 'none'}`);
   next();
 });
 
-app.get('/health', async (req, res) => {
-  const serviceStatus = await checkAllServices();
-  res.json({
+// Health check for gateway
+app.get('/health', express.json(), (req, res) => {
+  res.json({ 
     status: 'API Gateway is running',
     port: PORT,
     services: {
@@ -147,80 +72,158 @@ app.get('/health', async (req, res) => {
       ehr: EHR_SERVICE,
       ai: AI_SERVICE
     },
-    serviceHealth: serviceStatus,
     timestamp: new Date().toISOString()
   });
 });
 
-app.get('/api/status', async (req, res) => {
-  const serviceStatus = await checkAllServices();
-  res.json({ gateway: 'UP', services: serviceStatus });
+// API Routes Overview
+app.get('/api', express.json(), (req, res) => {
+  res.json({
+    message: 'QuickEHR API Gateway',
+    version: '1.0.0',
+    endpoints: {
+      auth: {
+        login: 'POST /api/auth/login',
+        register: 'POST /api/auth/register',
+        verify: 'GET /api/auth/verify'
+      },
+      patients: {
+        list: 'GET /api/ehr/patients',
+        create: 'POST /api/ehr/patients',
+        get: 'GET /api/ehr/patients/:id',
+        update: 'PUT /api/ehr/patients/:id',
+        delete: 'DELETE /api/ehr/patients/:id'
+      },
+      appointments: {
+        list: 'GET /api/ehr/appointments',
+        create: 'POST /api/ehr/appointments',
+        update: 'PUT /api/ehr/appointments/:id'
+      },
+      ai: {
+        diagnose: 'POST /api/ai/diagnose',
+        analytics: 'GET /api/ai/analytics',
+        insights: 'GET /api/ai/insights'
+      }
+    }
+  });
 });
 
-const createProxy = (target, pathRewrite, serviceName) => {
+// Enhanced Proxy Configuration
+const createProxy = (target, pathRewrite) => {
   return createProxyMiddleware({
     target,
     pathRewrite,
     changeOrigin: true,
     timeout: 10000,
     logLevel: 'debug',
-
-    onProxyReq: (proxyReq, req) => {
-      console.log(`🔄 Proxying ${req.method} ${req.url} to ${target}`);
+    
+    // CORS headers for proxied responses
+    onProxyRes: function (proxyRes, req, res) {
+      // Allow the proxy to handle CORS
+      const origin = req.headers.origin;
+      if (origin && corsOptions.origin(origin, () => {})) {
+        proxyRes.headers['Access-Control-Allow-Origin'] = origin;
+        proxyRes.headers['Access-Control-Allow-Credentials'] = 'true';
+        proxyRes.headers['Access-Control-Allow-Methods'] = 'GET,POST,PUT,DELETE,PATCH,OPTIONS';
+        proxyRes.headers['Access-Control-Allow-Headers'] = 'Origin,X-Requested-With,Content-Type,Accept,Authorization,Cache-Control';
+      }
+      
+      console.log(`Proxy response: ${proxyRes.statusCode} for ${req.method} ${req.url}`);
+    },
+    
+    // Handle request forwarding
+    onProxyReq: (proxyReq, req, res) => {
+      // Forward authorization header
       if (req.headers.authorization) {
         proxyReq.setHeader('Authorization', req.headers.authorization);
       }
+      
+      // Forward origin header
+      if (req.headers.origin) {
+        proxyReq.setHeader('Origin', req.headers.origin);
+      }
+      
+      // Handle POST/PUT/PATCH body data
+      if (req.body && (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH')) {
+        const bodyData = JSON.stringify(req.body);
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+        proxyReq.write(bodyData);
+      }
     },
-
-    onProxyRes: (proxyRes, req) => {
-      console.log(`✅ ${serviceName} responded: ${proxyRes.statusCode} for ${req.method} ${req.url}`);
-    },
-
+    
+    // Handle errors
     onError: (err, req, res) => {
-      console.error(`❌ ${serviceName} proxy error:`, err.message);
+      console.error('Proxy error:', err.message);
+      console.error('Request details:', {
+        method: req.method,
+        url: req.url,
+        origin: req.headers.origin,
+        headers: Object.keys(req.headers)
+      });
+      
       if (!res.headersSent) {
-        res.status(502).json({
-          error: 'Bad Gateway',
-          message: `${serviceName} service is unavailable`,
-          details: err.message,
-          service: serviceName,
-          target,
-          timestamp: new Date().toISOString()
+        // Ensure CORS headers are set even for error responses
+        const origin = req.headers.origin;
+        if (origin) {
+          res.setHeader('Access-Control-Allow-Origin', origin);
+          res.setHeader('Access-Control-Allow-Credentials', 'true');
+        }
+        
+        res.status(503).json({ 
+          error: 'Service temporarily unavailable',
+          message: err.message,
+          service: req.path ? req.path.split('/')[2] : "unknown"
         });
       }
     }
   });
 };
 
-// Proxy routes
-app.use('/api/auth', createProxy(AUTH_SERVICE, { '^/api/auth': '' }, 'AUTH'));
-app.use('/api/ehr', createProxy(EHR_SERVICE, { '^/api/ehr': '' }, 'EHR'));
-app.use('/api/ai', createProxy(AI_SERVICE, { '^/api/ai': '' }, 'AI'));
+// Auth Service Proxy
+app.use('/api/auth', express.json(), createProxy(AUTH_SERVICE, { '^/api/auth': '' }));
 
-app.get('/api', (req, res) => {
-  res.json({
-    message: 'QuickEHR API Gateway',
-    version: '1.0.0',
-    status: 'UP',
-    endpoints: {
-      auth: 'POST /api/auth/login, POST /api/auth/register',
-      ehr: 'GET /api/ehr/patients, POST /api/ehr/patients',
-      ai: 'POST /api/ai/diagnose, GET /api/ai/analytics'
-    },
-    debug: {
-      health: 'GET /health',
-      status: 'GET /api/status'
-    }
-  });
-});
+// EHR Service Proxy
+app.use('/api/ehr', express.json(), createProxy(EHR_SERVICE, { '^/api/ehr': '' }));
 
+// AI Service Proxy
+app.use('/api/ai', express.json(), createProxy(AI_SERVICE, { '^/api/ai': '' }));
+
+// Catch-all for undefined routes
 app.use('*', (req, res) => {
   res.status(404).json({
     error: 'Route not found',
     message: 'The requested endpoint does not exist',
-    path: req.originalUrl,
-    method: req.method
+    available_endpoints: ['/api/auth', '/api/ehr', '/api/ai'],
+    documentation: '/api'
   });
+});
+
+// Global error handler
+app.use((err, req, res, next) => {
+  console.error('Gateway error:', err);
+  if (!res.headersSent) {
+    // Ensure CORS headers are set for error responses
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+    }
+    
+    res.status(500).json({
+      error: 'Internal server error',
+      message: err.message
+    });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`🚀 API Gateway running on port ${PORT}`);
+  console.log(`📋 Available at: http://localhost:${PORT}/api`);
+  console.log(`🔐 Auth Service: ${AUTH_SERVICE}`);
+  console.log(`🏥 EHR Service: ${EHR_SERVICE}`);
+  console.log(`🤖 AI Service: ${AI_SERVICE}`);
+  console.log(`🌐 CORS enabled for development origins`);
 });
 
 module.exports = app;
