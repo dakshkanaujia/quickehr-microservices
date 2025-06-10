@@ -1,0 +1,31 @@
+{
+  "name": "quickehr-microservices",
+  "version": "1.0.0",
+  "description": "AI-Powered EHR Microservices System",
+  "main": "gateway/server.js",
+  "scripts": {
+    "start": "node gateway/server.js",
+    "dev": "concurrently \"npm run auth\" \"npm run ehr\" \"npm run ai\" \"npm run gateway\"",
+    "auth": "nodemon auth-service/server.js",
+    "ehr": "nodemon ehr-service/server.js",
+    "ai": "nodemon ai-service/server.js",
+    "gateway": "nodemon gateway/server.js"
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.5.0",
+    "express": "^4.21.2",
+    "http-proxy-middleware": "^2.0.9",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^7.8.7"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "nodemon": "^3.1.10"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}
