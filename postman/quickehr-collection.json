@@ -7,7 +7,7 @@
   "variable": [
     {
       "key": "baseUrl",
-      "value": "http://localhost:3000/api",
+      "value": "https://quickehr-gateway.onrender.com/api",
       "type": "string"
     },
     {
