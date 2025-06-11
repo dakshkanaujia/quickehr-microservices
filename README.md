@@ -17,7 +17,7 @@ QuickEHR is a minimal, microservices-based EHR (Electronic Health Record) platfo
 
 ## ⚙️ Frontend Deployed LINK
 As the backend APIs are deployed on Render Free Service, it'll take time to load initially, as the free tier service goes off after every 15 minutes of non-usage
-[https://quickehr-api-tester.vercel.app/login](https://quickehr-api-tester.vercel.app/login)
+[https://quickehr-api-tester.vercel.app/login](https://quickehr-api-tester.vercel.app)
 
 ---
 
